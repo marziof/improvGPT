@@ -74,3 +74,29 @@ def amp_context(device, cfg):
     return torch.autocast(device_type="cuda" if device == "cuda" else "cpu", dtype=torch.float16, enabled=enabled)
 
 
+import hashlib
+
+def file_sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def checkpoint_tokenizer_hash(ckpt_path, saved_cfg=None):
+    # preferred: recorded in the checkpoint's config; fallback: the meta.json sitting next to it
+    if saved_cfg and saved_cfg.get("tokenizer_sha256"):
+        return saved_cfg["tokenizer_sha256"]
+    side = Path(ckpt_path).with_name("meta.json")
+    if side.exists():
+        return json.loads(side.read_text()).get("tokenizer_sha256")
+    return None
+
+
+def check_tokenizer(tok_path, expected_hash, what="checkpoint"):
+    h = file_sha256(tok_path)
+    if expected_hash is None:
+        print(f"warning: no tokenizer hash recorded for the {what}; cannot verify {tok_path}")
+    elif h != expected_hash:
+        raise ValueError(f"tokenizer mismatch: {tok_path} has hash {h[:12]}, the {what} expects {expected_hash[:12]}")

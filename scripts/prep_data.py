@@ -15,6 +15,7 @@ from pathlib import Path
 
 import numpy as np
 from tokenizers import Tokenizer, decoders, models, pre_tokenizers, trainers
+from gpt.utils import file_sha256
 
  
 DATASET = "roneneldan/TinyStories"
@@ -168,6 +169,7 @@ def main(argv=None):
         "special_tokens": BASE_SPECIAL_TOKENS + args.extra_special_tokens,
         "train": train_stats,
         "val": val_stats,
+        "tokenizer_sha256": file_sha256(tok_path)
     }
     (out / "meta.json").write_text(json.dumps(meta, indent=2))
  

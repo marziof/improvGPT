@@ -6,14 +6,28 @@ from gpt.config import Config
 import argparse
 from pathlib import Path
 from tokenizers import Tokenizer
+from gpt.utils import check_tokenizer, checkpoint_tokenizer_hash     # add to the imports at the top of generate.py
 
+from dataclasses import fields
 
 def load_model(ckpt_path, device="cpu"):
     ckpt = torch.load(ckpt_path, map_location=device)
-    cfg = Config(**ckpt["cfg"])
+    saved = ckpt["cfg"]
+    valid = {f.name for f in fields(Config)}
+    unknown = sorted(set(saved) - valid)
+    if unknown:
+        print(f"note: ignoring saved config keys this Config doesn't have: {unknown}")
+    cfg = Config(**{k: v for k, v in saved.items() if k in valid})
     model = GPT(cfg).to(device)
     model.load_state_dict(ckpt["model"])
     return model.eval(), cfg
+
+# def load_model(ckpt_path, device="cpu"):
+#     ckpt = torch.load(ckpt_path, map_location=device)
+#     cfg = Config(**ckpt["cfg"])
+#     model = GPT(cfg).to(device)
+#     model.load_state_dict(ckpt["model"])
+#     return model.eval(), cfg
 
 
 
@@ -28,8 +42,7 @@ def select_next_token(logits, temperature=1.0, k=None, generator=None):
     top_values, top_indices = torch.topk(logits, k=k, dim=-1)
     probas = torch.softmax(top_values/temperature, dim=-1)
     sampled_index = torch.multinomial(probas, num_samples=1, generator=generator)
-    selected_index = top_indices[sampled_index]
-
+    selected_index = top_indices.gather(-1, sampled_index)
     return selected_index
 
 
@@ -76,6 +89,30 @@ def generate_cached(model, context_len, idx, max_new_tokens, temperature, k, gen
     return output
 
 
+@torch.no_grad()
+def generate_batch(model, context_len, idx, max_new_tokens, temperature, k, generator, stop_ids, pad_id):
+    # idx: (B, T0), all prompts the same length. Returns (output, finished, n_new).
+    B, T0 = idx.shape
+    assert T0 + max_new_tokens <= context_len, "the cache holds context_len positions"
+    stop = torch.as_tensor(stop_ids, device=idx.device)                      # (S,) long
+    cache = model.make_cache(B)                                              # change 1: B rows instead of 1
+    output = idx.clone()
+    logits, _ = model(idx, start_pos=0, cache=cache)                         # prefill, (B, T0, V)
+    pos = T0
+    finished = torch.zeros(B, dtype=torch.bool, device=idx.device)           # change 2: one flag per row
+    n_new = torch.zeros(B, dtype=torch.long, device=idx.device)
+    for _ in range(max_new_tokens):
+        tok = select_next_token(logits[:, -1], temperature, k, generator)    # change 3: (B, V) in, (B, 1) out
+        tok = torch.where(finished[:, None], torch.full_like(tok, pad_id), tok)    # rows that already stopped emit padding
+        n_new += (~finished).long()                                          # count tokens from rows that were active, stop token included
+        finished = finished | torch.isin(tok[:, 0], stop)                    # change 4: a set of stop ids, checked per row
+        output = torch.cat([output, tok], dim=-1)
+        if finished.all():                                                   # change 5: stop only when every row is done
+            break
+        logits, _ = model(tok, start_pos=pos, cache=cache)
+        pos += 1
+    return output, finished, n_new
+
 
 def main(argv=None):
     p = argparse.ArgumentParser(description="Sample text from a checkpoint")
@@ -92,8 +129,15 @@ def main(argv=None):
     args = p.parse_args(argv)
 
     run = Path(args.run_dir)
-    model, cfg = load_model(run / args.ckpt)
-    tok = Tokenizer.from_file(args.tokenizer or str(run / "tokenizer.json"))
+    #model, cfg = load_model(run / args.ckpt)
+    #tok = Tokenizer.from_file(args.tokenizer or str(run / "tokenizer.json"))
+    # inside main(), replacing the two lines that load the model and the tokenizer:
+    ckpt_path = run / args.ckpt
+    model, cfg = load_model(ckpt_path)
+    tok_path = args.tokenizer or str(run / "tokenizer.json")
+    expected = cfg.tokenizer_sha256 or checkpoint_tokenizer_hash(ckpt_path)
+    check_tokenizer(tok_path, expected)                                   # raises on a mismatch, warns if no hash is recorded
+    tok = Tokenizer.from_file(tok_path)
     eot_id = tok.token_to_id("<|endoftext|>")
     idx = torch.tensor([[eot_id] + tok.encode(args.prompt).ids])     # every training document starts after an eot token
     g = torch.Generator().manual_seed(args.seed)

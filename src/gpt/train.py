@@ -4,6 +4,7 @@ from gpt.optim import build_optimizer, build_scheduler
 from gpt.data import get_batch, get_val_batches
 from gpt.utils import get_device, save_checkpoint, load_checkpoint, load_pretrained, log, amp_context, get_git_hash
 from gpt.config import load_config
+from gpt.improv_data import get_example_batch, get_val_example_batches
 
 from pathlib import Path
 import argparse
@@ -33,7 +34,13 @@ def train(cfg, trace=True, save=True):
 
     data_dir = Path(cfg.data_dir)
     train_path, val_path = data_dir / "train.bin", data_dir / "val.bin"
-    val_data = get_val_batches(val_path,  cfg.batch_size, cfg.context_len, cfg.eval_batches, device, seed=cfg.seed)
+    #val_data = get_val_batches(val_path,  cfg.batch_size, cfg.context_len, cfg.eval_batches, device, seed=cfg.seed)
+    if cfg.data_format == "examples":
+        val_data = get_val_example_batches(cfg.data_dir, cfg.batch_size, device)       # every val row once; eval_batches is ignored
+        fetch = lambda: get_example_batch(cfg.data_dir, "train", cfg.batch_size, g, device)
+    else:
+        val_data = get_val_batches(val_path, cfg.batch_size, cfg.context_len, cfg.eval_batches, device, seed=cfg.seed)
+        fetch = lambda: get_batch(train_path, cfg.batch_size, cfg.context_len, g, device)
     run_path = Path(cfg.resume).parent if cfg.resume else Path(cfg.run_dir) / cfg.run_name
     run_path.mkdir(parents=True, exist_ok=True)
 
@@ -62,16 +69,21 @@ def train(cfg, trace=True, save=True):
         print(f"resumed from {cfg.resume} at step {start_step}")
     elif cfg.init_from:
         load_pretrained(cfg.init_from, model, device)     # weights only
+        if cfg.copy_embedding:
+            dst, src = cfg.copy_embedding
+            with torch.no_grad():
+                model.tok_emb.weight[dst] = model.tok_emb.weight[src]
+            print(f"copied the embedding of token {src} into token {dst}")
     if cfg.init_from and not cfg.resume:
         base = evaluate(model, val_data, amp_ctx)
         log({"baseline_val_loss": base}, 0, run_path, trace, cfg.wandb)
     if cfg.overfit:
-        x, y = get_batch(train_path, cfg.batch_size, cfg.context_len, g, device)
+        x, y = fetch()
     t_last, step_last = time.time(), start_step - 1
     history = []
     for step in range(start_step, cfg.max_steps):
         if not cfg.overfit:
-            x, y = get_batch(train_path, cfg.batch_size, cfg.context_len, g, device)
+            x, y = fetch()
         train_loss, grad_norm = train_step(model, opt, x, y, cfg.grad_clip, amp_ctx, scaler)
         if not math.isfinite(train_loss):
             raise SystemExit(f"non-finite loss at step {step}; stopping, last good checkpoints are kept")
@@ -124,17 +136,28 @@ def train_step(model, opt, x, y, grad_clip, amp_ctx, scaler=None):
     return loss.item(), grad_norm.item()
 
 
+# @torch.no_grad()
+# def evaluate(model, val_data, amp_ctx):
+#     model.eval()
+#     with amp_ctx:
+#         losses = [model(x, targets=y)[1].item() for x, y in val_data]
+#     model.train()
+#     return sum(losses) / len(losses)
+
+
 @torch.no_grad()
 def evaluate(model, val_data, amp_ctx):
+    # token-weighted
     model.eval()
+    total, n = 0.0, 0
     with amp_ctx:
-        losses = [model(x, targets=y)[1].item() for x, y in val_data]
+        for x, y in val_data:
+            loss = model(x, targets=y)[1].item()
+            k = int((y != -100).sum())
+            total += loss * k
+            n += k
     model.train()
-    return sum(losses) / len(losses)
-
-
-
-
+    return total / n
 
 
 def parse_overrides(pairs):

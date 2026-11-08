@@ -8,32 +8,32 @@ import torch
 from gpt.config import Config
 from gpt.generate import generate, generate_cached
 from gpt.model import GPT
-
-V, CTX = 100, 64
-
-
-@pytest.fixture(autouse=True)
-def no_grad():
-    with torch.no_grad():
-        yield
+from helpers import V, CTX, rand_ids
 
 
-@pytest.fixture(scope="module")
-def model():
-    torch.manual_seed(0)
-    cfg = Config(n_layer=2, n_head=2, d_model=64, context_len=CTX, batch_size=4, vocab_size=V)
-    m = GPT(cfg)
-    # the 0.02 init gives almost flat logits, so argmax gaps could sit near float noise;
-    # larger weights make the argmax comparisons meaningful
-    for p in m.parameters():
-        if p.dim() >= 2:
-            torch.nn.init.normal_(p, std=0.15)
-    return m.eval()
+# V, CTX = 100, 64
 
 
-def rand_ids(B, T, seed=0):
-    g = torch.Generator().manual_seed(seed)
-    return torch.randint(0, V, (B, T), generator=g)
+# @pytest.fixture(autouse=True)
+# def no_grad():
+#     with torch.no_grad():
+#         yield
+
+
+# @pytest.fixture(scope="module")
+# def model():
+#     torch.manual_seed(0)
+#     cfg = Config(n_layer=2, n_head=2, d_model=64, context_len=CTX, batch_size=4, vocab_size=V)
+#     m = GPT(cfg)
+#     # the 0.02 init gives almost flat logits, so argmax gaps could sit near float noise;
+#     # larger weights make the argmax comparisons meaningful
+#     for p in m.parameters():
+#         if p.dim() >= 2:
+#             torch.nn.init.normal_(p, std=0.15)
+#     return m.eval()
+
+
+
 
 
 def run_cached(model, idx, t0, cache):

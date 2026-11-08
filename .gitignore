@@ -2,9 +2,14 @@ data/
 data_sft/
 runs/
 model_checkpoints/
+data_improv/
 wandb/
 *.bin
 *.pt
 __pycache__/
 .ipynb_checkpoints/
 *.egg-info/
+
+# Local environment variables and secrets
+.env
+.env.local

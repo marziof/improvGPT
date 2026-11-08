@@ -1,0 +1,41 @@
+{
+  "vocab_size": 4096,
+  "eot_id": 0,
+  "source": "https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt",
+  "max_tokens": 224,
+  "split": {
+    "rule": "block",
+    "block_size": 50,
+    "val_every": 10
+  },
+  "turns": 7222,
+  "n_blocks": 145,
+  "val_blocks": [
+    9,
+    19,
+    29,
+    39,
+    49,
+    59,
+    69,
+    79,
+    89,
+    99,
+    109,
+    119,
+    129,
+    139
+  ],
+  "oversized_turns": 247,
+  "train": {
+    "chunks": 2085,
+    "tokens": 404498,
+    "chars": 1004703
+  },
+  "val": {
+    "chunks": 222,
+    "tokens": 42918,
+    "chars": 106076
+  },
+  "tokenizer_sha256": "3126f6a665bb318ef39dca3e0ea0ae28f5cb9549dc7b7d0fb27df8df6c80d5d9"
+}

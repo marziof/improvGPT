@@ -27,6 +27,9 @@ class Config:
     seed: int=42
     overfit: bool = False
     overwrite: bool = False
+    tokenizer_sha256: str | None = None
+    data_format: str = "stream"          # "stream" (flat token file) or "examples" (masked improv rows)
+    copy_embedding: list[int] | None = None      # [dst, src]: initialize token dst's embedding row from token src
 
     n_layer: int = 6
     n_head: int = 6
@@ -51,6 +54,7 @@ class Config:
         assert self.warmup_steps < self.max_steps, "warmup_steps must be < max_steps"
         assert self.amp in ("none", "fp16"), f"unknown amp mode {self.amp}"
         assert self.device in ("auto", "cpu", "cuda", "mps"), f"unknown device {self.device}"
+        assert self.data_format in ("stream", "examples")
 
 
 
@@ -77,6 +81,14 @@ def load_config(path, **overrides):
         cfg.vocab_size = meta["vocab_size"]
     else:                                        # set from the checkpoint above
         assert meta["vocab_size"] == cfg.vocab_size, "data tokenizer vocab != model vocab"
+    from gpt.utils import checkpoint_tokenizer_hash         # local import avoids a circular import at module load
+    cfg.tokenizer_sha256 = meta.get("tokenizer_sha256")      # hash of the tokenizer behind THIS run's data
+    if d.get("init_from"):
+        ck_hash = checkpoint_tokenizer_hash(d["init_from"], ck_cfg)
+        if ck_hash and cfg.tokenizer_sha256 and ck_hash != cfg.tokenizer_sha256:
+            raise ValueError("data folder and init_from checkpoint were tokenized with different tokenizers")
+        if not (ck_hash and cfg.tokenizer_sha256):
+            print("warning: tokenizer hash missing on the checkpoint or the data folder; only the vocab size was checked")
     if cfg.run_name is None:
         cfg.run_name = f"{datetime.now():%Y-%m-%d_%H%M}_{Path(path).stem}"
     return cfg
