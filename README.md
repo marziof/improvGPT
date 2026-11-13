@@ -1,4 +1,4 @@
-# improvGPT (working title)
+# improvGPT 
 
 A small GPT-style language model built from scratch in PyTorch, taken through a post-training pipeline: pretraining, supervised finetuning, a "reply as the other character" improv stage, and (in progress) reinforcement learning with programmatic rewards. The goal is to implement and measure the following: tokenizer, RoPE, attention, KV cache, optimizers, evaluation, SFT, RL.
 
